@@ -46,12 +46,13 @@ abstract class AppDatabase : RoomDatabase() {
                 super.onCreate(db)
                 INSTANCE?.let { database ->
                     CoroutineScope(Dispatchers.IO).launch {
-                        populateDatabase(database.connectionDao())
+                        populateDatabase(database.connectionDao(), database.developerProfileDao())
                     }
                 }
             }
 
-            suspend fun populateDatabase(connectionDao: ConnectionDao) {
+            suspend fun populateDatabase(connectionDao: ConnectionDao, profileDao: DeveloperProfileDao) {
+                // Conexões SSH pré-cadastradas
                 val connections = listOf(
                     SSHConnection(
                         name = "Sites e Sistemas",
@@ -88,6 +89,19 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 connections.forEach { connectionDao.insertConnection(it) }
+
+                // Perfil do desenvolvedor
+                val profile = DeveloperProfile(
+                    name = "Valdigley Santos",
+                    country = "Brasil",
+                    github = "valdigley",
+                    projectsBasePath = "/var/www/sites",
+                    webServerType = "nginx",
+                    sslEnabled = true,
+                    copyrightText = "Valdigley Santos",
+                    copyrightYear = "2025"
+                )
+                profileDao.insertOrUpdate(profile)
             }
         }
     }
