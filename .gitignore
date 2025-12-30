@@ -1,0 +1,49 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+
+# Gradle files
+.gradle/
+gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration file
+local.properties
+
+# Android Studio
+*.iml
+.idea/
+.cxx/
+*.hprof
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Signing
+*.jks
+*.keystore
+release/
+
+# Logs
+*.log
+
+# Temporary build scripts
+run_build.ps1
+build_debug.bat
+
+# Sensitive data
+secrets/
+*.env
+.claude/
