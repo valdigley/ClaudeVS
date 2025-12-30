@@ -5,9 +5,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -31,8 +34,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import com.valdigley.claudevs.util.CrashLogger
+import com.valdigley.claudevs.util.AppUpdateChecker
+import com.valdigley.claudevs.util.AppUpdate
 
 class MainActivity : ComponentActivity() {
+    private lateinit var updateChecker: AppUpdateChecker
     private lateinit var database: AppDatabase
     private val sshService = SSHService()
 
@@ -41,11 +47,12 @@ class MainActivity : ComponentActivity() {
         CrashLogger.init(this)
         CrashLogger.log("MainActivity", "onCreate started")
         database = AppDatabase.getDatabase(this)
+        updateChecker = AppUpdateChecker(this)
         setContent {
             ClaudeVSTheme {
                 Surface(Modifier.fillMaxSize(), color = Background) {
                     // Pass lifecycleScope for stable coroutine execution
-                    MainApp(database, sshService, lifecycleScope) { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
+                    MainApp(database, sshService, updateChecker, lifecycleScope) { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
                 }
             }
         }
@@ -55,11 +62,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: CoroutineScope, showToast: (String) -> Unit) {
+fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpdateChecker, stableScope: CoroutineScope, showToast: (String) -> Unit) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     // Use stableScope for long-running operations (like Claude execution) to survive recomposition
-    
+
     var connections by remember { mutableStateOf<List<SSHConnection>>(emptyList()) }
     var isConnected by remember { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
@@ -78,8 +85,23 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
     var contextStats by remember { mutableStateOf<ContextStats?>(null) }
     var detectedTemplate by remember { mutableStateOf<ProjectTemplate?>(null) }
 
+    // Update checker state
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) { database.connectionDao().getAllConnections().collectLatest { connections = it } }
     LaunchedEffect(Unit) { database.developerProfileDao().getProfile().collectLatest { developerProfile = it } }
+
+    // Check for updates on app start
+    LaunchedEffect(Unit) {
+        val update = updateChecker.checkForUpdate()
+        if (update != null) {
+            availableUpdate = update
+            showUpdateDialog = true
+            CrashLogger.log("UpdateChecker", "Update available: ${update.versionName}")
+        }
+    }
 
     fun addOutput(text: String, type: LineType = LineType.OUTPUT) {
         try {
@@ -399,6 +421,32 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
         }
     }
 
+    // Update Dialog
+    if (showUpdateDialog && availableUpdate != null) {
+        UpdateDialog(
+            update = availableUpdate!!,
+            currentVersion = updateChecker.getCurrentVersion(),
+            isDownloading = isDownloadingUpdate,
+            onDismiss = { if (!isDownloadingUpdate) showUpdateDialog = false },
+            onUpdate = {
+                isDownloadingUpdate = true
+                updateChecker.downloadAndInstall(
+                    availableUpdate!!,
+                    onProgress = { },
+                    onComplete = {
+                        isDownloadingUpdate = false
+                        showUpdateDialog = false
+                        showToast("Download concluído! Instalando...")
+                    },
+                    onError = { error ->
+                        isDownloadingUpdate = false
+                        showToast("Erro: $error")
+                    }
+                )
+            }
+        )
+    }
+
     NavHost(navController, startDestination = "connections") {
         composable("connections") {
             ConnectionsScreen(connections,
@@ -525,4 +573,52 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
             )
         }
     }
+}
+
+@Composable
+fun UpdateDialog(
+    update: AppUpdate,
+    currentVersion: String,
+    isDownloading: Boolean,
+    onDismiss: () -> Unit,
+    onUpdate: () -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { androidx.compose.material3.Text("Atualização Disponível") },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                androidx.compose.material3.Text("Versão ${update.versionName} disponível!")
+                androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.Text(
+                    "Versão atual: $currentVersion",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                )
+                if (update.releaseNotes.isNotBlank()) {
+                    androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.Text(
+                        update.releaseNotes.take(200),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (isDownloading) {
+                    androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+                    androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    androidx.compose.material3.Text("Baixando...", style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.Button(onClick = onUpdate, enabled = !isDownloading) {
+                androidx.compose.material3.Text(if (isDownloading) "Baixando..." else "Atualizar")
+            }
+        },
+        dismissButton = {
+            if (!isDownloading) {
+                androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    androidx.compose.material3.Text("Depois")
+                }
+            }
+        }
+    )
 }
