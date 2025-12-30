@@ -41,10 +41,8 @@ fun AddConnectionScreen(
     var username by remember { mutableStateOf(existingConnection?.username ?: "") }
     var password by remember { mutableStateOf(existingConnection?.password ?: "") }
     var workingDirectory by remember { mutableStateOf(existingConnection?.workingDirectory ?: "") }
-    var anthropicApiKey by remember { mutableStateOf(existingConnection?.anthropicApiKey ?: "") }
     var selectedColor by remember { mutableStateOf(existingConnection?.color ?: COLORS[0]) }
     var showPassword by remember { mutableStateOf(false) }
-    var showApiKey by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -83,14 +81,6 @@ fun AddConnectionScreen(
                 leadingIcon = { Icon(Icons.Default.Folder, null) }, shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Primary, focusedContainerColor = Surface, unfocusedContainerColor = Surface))
 
-            Text("Claude Code", color = ClaudeColor, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(anthropicApiKey, { anthropicApiKey = it }, Modifier.fillMaxWidth(), label = { Text("Anthropic API Key") }, placeholder = { Text("sk-ant-api03-...") },
-                leadingIcon = { Icon(Icons.Default.SmartToy, null, tint = ClaudeColor) },
-                trailingIcon = { IconButton(onClick = { showApiKey = !showApiKey }) { Icon(if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null) } },
-                visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                shape = RoundedCornerShape(12.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ClaudeColor, focusedContainerColor = Surface, unfocusedContainerColor = Surface),
-                supportingText = { Text("Obtenha em console.anthropic.com", color = OnSurfaceVariant) })
-
             Text("Cor", color = OnSurfaceVariant)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 COLORS.forEach { color ->
@@ -102,12 +92,12 @@ fun AddConnectionScreen(
             
             Spacer(Modifier.height(16.dp))
             
-            OutlinedButton(onClick = { onTest(SSHConnection(existingConnection?.id ?: 0, name, host, port.toIntOrNull() ?: 22, username, password, null, selectedColor, false, null, workingDirectory.ifBlank { null }, anthropicApiKey.ifBlank { null })) },
+            OutlinedButton(onClick = { onTest(SSHConnection(existingConnection?.id ?: 0, name, host, port.toIntOrNull() ?: 22, username, password, null, selectedColor, false, null, workingDirectory.ifBlank { null })) },
                 Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = PM2Color)) {
                 Icon(Icons.Default.NetworkCheck, null); Spacer(Modifier.width(8.dp)); Text("Testar Conexão")
             }
 
-            Button(onClick = { onSave(SSHConnection(existingConnection?.id ?: 0, name, host, port.toIntOrNull() ?: 22, username, password, null, selectedColor, existingConnection?.isDefault ?: false, existingConnection?.lastConnected, workingDirectory.ifBlank { null }, anthropicApiKey.ifBlank { null })) },
+            Button(onClick = { onSave(SSHConnection(existingConnection?.id ?: 0, name, host, port.toIntOrNull() ?: 22, username, password, null, selectedColor, existingConnection?.isDefault ?: false, existingConnection?.lastConnected, workingDirectory.ifBlank { null })) },
                 Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
                 Icon(Icons.Default.Save, null); Spacer(Modifier.width(8.dp)); Text(if (existingConnection != null) "Salvar" else "Adicionar")
             }

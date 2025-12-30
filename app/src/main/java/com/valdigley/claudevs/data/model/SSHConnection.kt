@@ -16,6 +16,5 @@ data class SSHConnection(
     val color: String = "#4CAF50",
     val isDefault: Boolean = false,
     val lastConnected: Long? = null,
-    val workingDirectory: String? = null,
-    val anthropicApiKey: String? = null
+    val workingDirectory: String? = null
 )

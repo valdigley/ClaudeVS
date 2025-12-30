@@ -72,7 +72,6 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
     var isReconnecting by remember { mutableStateOf(false) }
     var files by remember { mutableStateOf<List<FileItem>>(emptyList()) }
     var editingConnection by remember { mutableStateOf<SSHConnection?>(null) }
-    var currentConnectionApiKey by remember { mutableStateOf<String?>(null) }
     var isAutopilot by remember { mutableStateOf(true) } // Start in Autopilot mode by default
     var developerProfile by remember { mutableStateOf<DeveloperProfile?>(null) }
     var currentChecklist by remember { mutableStateOf<TaskChecklist?>(null) }
@@ -114,13 +113,9 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
                 } else {
                     sshService.getCurrentDirectory()
                 }
-                currentConnectionApiKey = connection.anthropicApiKey
                 val claudePath = sshService.discoverClaudePath()
                 if (claudePath != null) {
                     hasClaudeCode = true
-                    if (connection.anthropicApiKey.isNullOrBlank()) {
-                        addOutput("⚠️ API Key não configurada - edite a conexão", LineType.ERROR)
-                    }
                     // Auto-load context file from working directory
                     val contextLoaded = sshService.loadContextFile(currentPath)
                     val msgCount = sshService.getConversationMessageCount()
@@ -238,13 +233,12 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
             var streamingStarted = false
             val outputLines = mutableListOf<String>()
             val result = if (isClaudeMode && !isDirectShellCommand) {
-                CrashLogger.log("executeCommand", "Using Claude mode with apiKey=${!currentConnectionApiKey.isNullOrBlank()}, autopilot=$isAutopilot")
+                CrashLogger.log("executeCommand", "Using Claude mode with autopilot=$isAutopilot")
                 // Add Claude header before streaming starts
                 addOutput("\n🤖 Claude:", LineType.CLAUDE)
                 sshService.executeClaudeCode(
                     prompt = actualCommand,
                     workingDir = currentPath,
-                    apiKey = currentConnectionApiKey,
                     autopilot = isAutopilot,
                     developerProfileContext = developerProfile?.toContextString(),
                     onStreamLine = { line ->
@@ -330,7 +324,7 @@ fun MainApp(database: AppDatabase, sshService: SSHService, stableScope: Coroutin
             // Auto-summarize context if needed
             if (isClaudeMode && sshService.needsContextSummary()) {
                 addOutput("\n📝 Resumindo contexto...", LineType.INFO)
-                val summarized = sshService.summarizeContextIfNeeded(currentConnectionApiKey)
+                val summarized = sshService.summarizeContextIfNeeded()
                 if (summarized) {
                     addOutput("✅ Contexto resumido automaticamente", LineType.SUCCESS)
                     contextStats = sshService.getContextStats()

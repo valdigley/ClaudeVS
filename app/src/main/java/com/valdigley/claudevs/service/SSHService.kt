@@ -412,7 +412,6 @@ class SSHService {
     suspend fun executeClaudeCode(
         prompt: String,
         workingDir: String? = null,
-        apiKey: String? = null,
         timeout: Long = 300000,
         useContext: Boolean = true,
         autopilot: Boolean = false,
@@ -421,11 +420,6 @@ class SSHService {
     ): ExecutionResult = withContext(Dispatchers.IO) {
         val path = claudePath ?: return@withContext ExecutionResult(false, "", "Claude não encontrado")
         val currentSession = session ?: return@withContext ExecutionResult(false, "", "Sessão nula")
-
-        // API Key is REQUIRED for standalone usage (without Cursor)
-        if (apiKey.isNullOrBlank()) {
-            return@withContext ExecutionResult(false, "", "API Key não configurada. Edite a conexão e adicione sua Anthropic API Key.")
-        }
 
         // Set working directory in conversation manager for context
         conversationManager.setWorkingDirectory(workingDir)
@@ -442,34 +436,23 @@ class SSHService {
         val escapedPrompt = fullPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\$", "\\\$").replace("`", "\\`")
 
         // Build Claude command based on mode
-        // Claude Code CLI flags for non-interactive mode:
-        // -p (--print): Run in non-interactive/headless mode - THIS IS KEY for avoiding TUI prompts
-        // --dangerously-skip-permissions: Skip all permission prompts (blocked for root)
-        // --allowedTools: Pre-approve specific tools - WORKS WITH ROOT!
+        // Claude Code CLI uses OAuth authentication (Pro/Max plan)
+        // -p (--print): Run in non-interactive/headless mode
+        // --allowedTools: Pre-approve specific tools
 
         val claudeCmd = if (autopilot) {
-            // Autopilot mode: use --allowedTools to pre-approve all tools (works with root!)
-            // This allows Claude to execute bash, read, edit, write files autonomously
+            // Autopilot mode: use --allowedTools to pre-approve all tools
             "\"$path\" -p \"$escapedPrompt\" --allowedTools 'Bash' 'Read' 'Edit' 'Write' 'MultiEdit' 2>&1"
         } else {
             // Non-autopilot mode: use -p for safe read-only output
             "\"$path\" -p \"$escapedPrompt\" 2>&1"
         }
-        // Use API Key via environment variable
-        val envPrefix = "ANTHROPIC_API_KEY=\"$apiKey\" "
-        val fullClaudeCmd = "$envPrefix$claudeCmd"
-        // Pre-create Claude config to skip first-time setup wizard and API key prompts
-        val claudeConfigJson = """{"theme":"dark","hasCompletedOnboarding":true,"preferredNotifChannel":"none","autoUpdaterStatus":"disabled","primaryApiKeySource":"environment","hasAcceptedApiKeyRisk":true,"customApiKeyResponses":{"useCustomKey":true}}"""
 
-        // CD to workingDir and run Claude directly as the connected user (root or otherwise)
-        // No workarounds needed since we use --allowedTools instead of --dangerously-skip-permissions
+        // CD to workingDir and run Claude directly as the connected user
         val fullCommand = if (!workingDir.isNullOrBlank() && workingDir != "~") {
-            // Create config to skip setup wizard, then cd to working directory and run
-            "(test -f ~/.claude.json || echo '$claudeConfigJson' > ~/.claude.json); " +
-            "cd \"$workingDir\" && $fullClaudeCmd"
+            "cd \"$workingDir\" && $claudeCmd"
         } else {
-            // Create config in user's home to skip setup wizard
-            "(test -f ~/.claude.json || echo '$claudeConfigJson' > ~/.claude.json); $fullClaudeCmd"
+            claudeCmd
         }
 
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Full command: ${fullCommand.take(200)}")
@@ -685,21 +668,19 @@ class SSHService {
     fun needsContextSummary(): Boolean = conversationManager.needsContextSummary()
     fun getContextStats(): ContextStats = conversationManager.getContextStats()
 
-    // Summarize context using Claude
-    suspend fun summarizeContextIfNeeded(apiKey: String?): Boolean {
+    // Summarize context using Claude (uses OAuth authentication)
+    suspend fun summarizeContextIfNeeded(): Boolean {
         if (!conversationManager.needsContextSummary()) return false
-        if (apiKey.isNullOrBlank()) return false
 
         val summaryPrompt = conversationManager.getContextForSummary() ?: return false
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Summarizing context...")
 
         val path = claudePath ?: return false
         val escapedPrompt = summaryPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\$", "\\\$").replace("`", "\\`")
-        val envPrefix = "ANTHROPIC_API_KEY=\"$apiKey\" "
-        val claudeCmd = "\"$path\" -p \"$escapedPrompt\" 2>&1"
-        val fullCmd = "$envPrefix$claudeCmd"
 
-        val result = execute(fullCmd, useWorkingDir = false, timeout = 60000)
+        val claudeCmd = "\"$path\" -p \"$escapedPrompt\" 2>&1"
+
+        val result = execute(claudeCmd, useWorkingDir = false, timeout = 60000)
         if (result.success && result.output.isNotBlank()) {
             val cleanOutput = AnsiCleaner.clean(result.output)
             conversationManager.applySummary(cleanOutput)
