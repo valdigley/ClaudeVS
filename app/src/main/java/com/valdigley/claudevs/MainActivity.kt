@@ -1,9 +1,18 @@
 package com.valdigley.claudevs
 
+import android.Manifest
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -11,6 +20,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -27,6 +37,7 @@ import com.valdigley.claudevs.data.model.ProjectTemplate
 import com.valdigley.claudevs.service.ContextStats
 import com.valdigley.claudevs.service.FileItem
 import com.valdigley.claudevs.service.SSHService
+import com.valdigley.claudevs.service.SSHForegroundService
 import com.valdigley.claudevs.ui.screens.*
 import com.valdigley.claudevs.ui.theme.Background
 import com.valdigley.claudevs.ui.theme.ClaudeVSTheme
@@ -40,7 +51,34 @@ import com.valdigley.claudevs.util.AppUpdate
 class MainActivity : ComponentActivity() {
     private lateinit var updateChecker: AppUpdateChecker
     private lateinit var database: AppDatabase
-    private val sshService = SSHService()
+
+    // Service binding
+    private var sshForegroundService: SSHForegroundService? = null
+    private var serviceBound = mutableStateOf(false)
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            CrashLogger.log("MainActivity", "Service connected")
+            val binder = service as SSHForegroundService.SSHBinder
+            sshForegroundService = binder.getService()
+            serviceBound.value = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            CrashLogger.log("MainActivity", "Service disconnected")
+            sshForegroundService = null
+            serviceBound.value = false
+        }
+    }
+
+    // Notification permission launcher (Android 13+)
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        CrashLogger.log("MainActivity", "Notification permission granted: $isGranted")
+        // Start service regardless of permission (notification just won't show)
+        startAndBindService()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,21 +86,71 @@ class MainActivity : ComponentActivity() {
         CrashLogger.log("MainActivity", "onCreate started")
         database = AppDatabase.getDatabase(this)
         updateChecker = AppUpdateChecker(this)
+
+        // Request notification permission on Android 13+ before starting service
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            when {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED -> {
+                    startAndBindService()
+                }
+                else -> {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+        } else {
+            startAndBindService()
+        }
+
         setContent {
             ClaudeVSTheme {
                 Surface(Modifier.fillMaxSize(), color = Background) {
-                    // Pass lifecycleScope for stable coroutine execution
-                    MainApp(database, sshService, updateChecker, lifecycleScope) { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }
+                    val isBound by serviceBound
+                    if (isBound && sshForegroundService != null) {
+                        MainApp(database, sshForegroundService!!.sshService, updateChecker, lifecycleScope, sshForegroundService!!) {
+                            Toast.makeText(this, it, Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        // Show loading while waiting for service
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator()
+                        }
+                    }
                 }
             }
         }
     }
 
-    override fun onDestroy() { super.onDestroy(); sshService.disconnect() }
+    private fun startAndBindService() {
+        CrashLogger.log("MainActivity", "Starting and binding service")
+        val serviceIntent = Intent(this, SSHForegroundService::class.java)
+
+        // Start as foreground service
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        // Bind to service
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    override fun onDestroy() {
+        CrashLogger.log("MainActivity", "onDestroy")
+        // Unbind but don't stop service - connection stays alive
+        if (serviceBound.value) {
+            unbindService(serviceConnection)
+            serviceBound.value = false
+        }
+        super.onDestroy()
+    }
 }
 
 @Composable
-fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpdateChecker, stableScope: CoroutineScope, showToast: (String) -> Unit) {
+fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpdateChecker, stableScope: CoroutineScope, foregroundService: SSHForegroundService, showToast: (String) -> Unit) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     // Use stableScope for long-running operations (like Claude execution) to survive recomposition
@@ -127,6 +215,9 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
         try {
             if (sshService.connect(connection)) {
                 isConnected = true
+                // Notify foreground service of connection
+                foregroundService.updateConnectionState(true, connection.name)
+
                 // Use connection's workingDirectory if set, otherwise get current directory
                 currentPath = if (!connection.workingDirectory.isNullOrBlank()) {
                     // Navigate to the configured working directory
@@ -155,8 +246,14 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
                     addOutput("⚠️ Claude Code não encontrado - use o botão para instalar", LineType.ERROR)
                 }
                 database.connectionDao().updateLastConnected(connection.id, System.currentTimeMillis())
-            } else addOutput("❌ Falha na conexão", LineType.ERROR)
-        } catch (e: Exception) { addOutput("❌ ${e.message}", LineType.ERROR) }
+            } else {
+                foregroundService.updateConnectionState(false)
+                addOutput("❌ Falha na conexão", LineType.ERROR)
+            }
+        } catch (e: Exception) {
+            foregroundService.updateConnectionState(false)
+            addOutput("❌ ${e.message}", LineType.ERROR)
+        }
         isLoading = false
         isConnecting = false
     }
@@ -172,6 +269,9 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
                     isConnected = true
                     currentPath = sshService.getCurrentDirectory()
                     addOutput("✅ Reconectado!", LineType.SUCCESS)
+                    // Notify foreground service
+                    val conn = sshService.getCurrentConnection()
+                    foregroundService.updateConnectionState(true, conn?.name)
                     // Re-discover Claude path after reconnect
                     val claudePath = sshService.discoverClaudePath()
                     hasClaudeCode = claudePath != null
@@ -193,6 +293,7 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
         addOutput("❌ Falha após $maxRetries tentativas", LineType.ERROR)
         addOutput("💡 Use o botão para reconectar manualmente", LineType.INFO)
         isConnected = false
+        foregroundService.updateConnectionState(false)
         isReconnecting = false
         return false
     }
@@ -527,7 +628,7 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
                             showToast("Erro: ${e.message}")
                         }
                     } },
-                    onDisconnect = { sshService.fullDisconnect(); isConnected = false }
+                    onDisconnect = { sshService.fullDisconnect(); isConnected = false; foregroundService.updateConnectionState(false) }
                 )
             }
         }
