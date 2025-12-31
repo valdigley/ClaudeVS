@@ -133,29 +133,148 @@ fun ConnectionsScreen(
 @Composable
 fun ConnectionCard(connection: SSHConnection, onClick: () -> Unit, onFiles: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit, onSetDefault: () -> Unit) {
     val color = try { Color(android.graphics.Color.parseColor(connection.color)) } catch (e: Exception) { Primary }
-    
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Surface)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.width(4.dp).height(50.dp).clip(RoundedCornerShape(2.dp)).background(color))
-            Spacer(Modifier.width(16.dp))
-            Icon(Icons.Default.Dns, null, tint = color, modifier = Modifier.size(32.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(connection.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = OnBackground)
-                    if (connection.isDefault) {
-                        Spacer(Modifier.width(8.dp))
-                        Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFFFD700)) {
-                            Text("Padrão", Modifier.padding(horizontal = 8.dp, vertical = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+    var showMenu by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Surface)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+            // Main row with info
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Color bar
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(color)
+                )
+                Spacer(Modifier.width(10.dp))
+                // Server icon
+                Icon(Icons.Default.Dns, null, tint = color, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
+                // Info
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            connection.name,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            color = OnBackground,
+                            maxLines = 1
+                        )
+                        if (connection.isDefault) {
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFFFFD700)
+                            ) {
+                                Text(
+                                    "★",
+                                    Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
                         }
                     }
+                    Text(
+                        "${connection.username}@${connection.host}:${connection.port}",
+                        fontSize = 11.sp,
+                        color = OnSurfaceVariant,
+                        maxLines = 1
+                    )
                 }
-                Text("${connection.username}@${connection.host}:${connection.port}", fontSize = 12.sp, color = OnSurfaceVariant)
+                // Menu button
+                Box {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.Default.MoreVert, null, Modifier.size(20.dp), tint = OnSurfaceVariant)
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Arquivos", fontSize = 14.sp) },
+                            onClick = { showMenu = false; onFiles() },
+                            leadingIcon = { Icon(Icons.Default.Folder, null, Modifier.size(18.dp), tint = StatusColor) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (connection.isDefault) "Remover padrão" else "Definir padrão", fontSize = 14.sp) },
+                            onClick = { showMenu = false; onSetDefault() },
+                            leadingIcon = {
+                                Icon(
+                                    if (connection.isDefault) Icons.Default.Star else Icons.Default.StarOutline,
+                                    null,
+                                    Modifier.size(18.dp),
+                                    tint = Color(0xFFFFD700)
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Editar", fontSize = 14.sp) },
+                            onClick = { showMenu = false; onEdit() },
+                            leadingIcon = { Icon(Icons.Default.Edit, null, Modifier.size(18.dp), tint = PM2Color) }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Excluir", fontSize = 14.sp, color = Error) },
+                            onClick = { showMenu = false; onDelete() },
+                            leadingIcon = { Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = Error) }
+                        )
+                    }
+                }
             }
-            IconButton(onClick = onSetDefault) { Icon(if (connection.isDefault) Icons.Default.Star else Icons.Default.StarOutline, null, tint = if (connection.isDefault) Color(0xFFFFD700) else OnSurfaceVariant) }
-            IconButton(onClick = onFiles) { Icon(Icons.Default.Folder, null, tint = StatusColor) }
-            IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, null, tint = PM2Color) }
-            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = Error) }
+            // Quick action buttons row
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Connect button
+                Surface(
+                    onClick = onClick,
+                    shape = RoundedCornerShape(8.dp),
+                    color = color.copy(alpha = 0.15f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp), tint = color)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Conectar", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color)
+                    }
+                }
+                // Files button
+                Surface(
+                    onClick = onFiles,
+                    shape = RoundedCornerShape(8.dp),
+                    color = StatusColor.copy(alpha = 0.15f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.Folder, null, Modifier.size(16.dp), tint = StatusColor)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Arquivos", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = StatusColor)
+                    }
+                }
+            }
         }
     }
 }

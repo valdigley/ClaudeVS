@@ -14,8 +14,8 @@ android {
         targetSdk 34
         // Versioning: versionCode = major*10000 + minor*100 + patch
         // e.g., 1.0.0 = 10000, 1.2.3 = 10203
-        versionCode 10101
-        versionName "1.1.1"
+        versionCode 10102
+        versionName "1.1.2"
         vectorDrawables { useSupportLibrary true }
     }
 

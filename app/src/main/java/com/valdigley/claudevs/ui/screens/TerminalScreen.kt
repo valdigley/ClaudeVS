@@ -181,93 +181,95 @@ fun TerminalScreen(
         containerColor = Background
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            Row(Modifier.fillMaxWidth().background(Surface).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(8.dp).clip(CircleShape).background(if (isConnected) Success else Error)); Spacer(Modifier.width(8.dp)); Text(if (isConnected) "Conectado" else "Desconectado", fontSize = 12.sp, color = OnSurfaceVariant) }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Status bar - responsive with horizontal scroll
+            Column(Modifier.fillMaxWidth().background(Surface)) {
+                // Connection status row
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(if (isConnected) Success else Error))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isConnected) "Conectado" else "Desconectado", fontSize = 11.sp, color = OnSurfaceVariant)
+                    }
                     // Reconnect button when disconnected
                     if (!isConnected) {
-                        Surface(onClick = onReconnect, shape = RoundedCornerShape(12.dp), color = Primary, enabled = !isReconnecting) {
-                            Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(onClick = onReconnect, shape = RoundedCornerShape(8.dp), color = Primary, enabled = !isReconnecting) {
+                            Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (isReconnecting) {
-                                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
+                                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = Color.White)
                                 } else {
-                                    Icon(Icons.Default.Refresh, null, Modifier.size(14.dp), tint = Color.White)
+                                    Icon(Icons.Default.Refresh, null, Modifier.size(12.dp), tint = Color.White)
                                 }
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (isReconnecting) "Reconectando..." else "Reconectar", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                Text(if (isReconnecting) "..." else "Reconectar", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                             }
                         }
                     }
+                }
+                // Buttons row - horizontally scrollable
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     // Install Claude button
                     if (!hasClaudeCode && isConnected) {
-                        Surface(onClick = onInstallClaude, shape = RoundedCornerShape(12.dp), color = ClaudeColor, enabled = !isInstallingClaude) {
-                            Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (isInstallingClaude) {
-                                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Color.White)
-                                } else {
-                                    Icon(Icons.Default.Download, null, Modifier.size(14.dp), tint = Color.White)
-                                }
-                                Spacer(Modifier.width(4.dp))
-                                Text(if (isInstallingClaude) "Instalando..." else "Instalar Claude", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-                        }
+                        CompactChip(
+                            onClick = onInstallClaude,
+                            icon = Icons.Default.Download,
+                            text = if (isInstallingClaude) "..." else "Claude",
+                            color = ClaudeColor,
+                            enabled = !isInstallingClaude,
+                            isLoading = isInstallingClaude
+                        )
                     }
-                    // Claude mode toggle - always visible
-                    Surface(
+                    // Claude mode toggle
+                    CompactChip(
                         onClick = onToggleClaudeMode,
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isClaudeMode) ClaudeColor else SurfaceVariant
-                    ) {
-                        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.SmartToy, null, Modifier.size(14.dp), tint = if (isClaudeMode) Color.White else OnSurfaceVariant)
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (isClaudeMode) "Claude" else "Terminal", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (isClaudeMode) Color.White else OnSurfaceVariant)
-                        }
-                    }
+                        icon = Icons.Default.SmartToy,
+                        text = if (isClaudeMode) "Claude" else "Shell",
+                        color = if (isClaudeMode) ClaudeColor else SurfaceVariant,
+                        textColor = if (isClaudeMode) Color.White else OnSurfaceVariant
+                    )
                     // Autopilot toggle - only when in Claude mode
                     if (isClaudeMode) {
-                        Surface(
+                        CompactChip(
                             onClick = onToggleAutopilot,
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isAutopilot) Success else SurfaceVariant
-                        ) {
-                            Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.RocketLaunch, null, Modifier.size(14.dp), tint = if (isAutopilot) Color.White else OnSurfaceVariant)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Auto", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (isAutopilot) Color.White else OnSurfaceVariant)
-                            }
-                        }
-                        // Context indicator (persisted or conversation)
+                            icon = Icons.Default.RocketLaunch,
+                            text = "Auto",
+                            color = if (isAutopilot) Success else SurfaceVariant,
+                            textColor = if (isAutopilot) Color.White else OnSurfaceVariant
+                        )
+                        // Context indicator
                         if (hasConversationContext || hasPersistedContext) {
-                            Surface(
+                            CompactChip(
                                 onClick = { showClearContextDialog = true },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (hasPersistedContext) NPMColor.copy(alpha = 0.8f) else PM2Color.copy(alpha = 0.8f)
-                            ) {
-                                Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(if (hasPersistedContext) Icons.Default.Description else Icons.Default.History, null, Modifier.size(14.dp), tint = Color.White)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(if (hasPersistedContext) "📄" else "${conversationMessageCount / 2} msgs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                    Spacer(Modifier.width(4.dp))
-                                    Icon(Icons.Default.Close, null, Modifier.size(12.dp), tint = Color.White.copy(alpha = 0.7f))
-                                }
-                            }
+                                icon = if (hasPersistedContext) Icons.Default.Description else Icons.Default.History,
+                                text = if (hasPersistedContext) "Ctx" else "${conversationMessageCount / 2}",
+                                color = if (hasPersistedContext) NPMColor.copy(alpha = 0.8f) else PM2Color.copy(alpha = 0.8f),
+                                showClose = true
+                            )
                         }
                         // Save context button
                         if (conversationMessageCount > 0) {
-                            Surface(
+                            CompactChip(
                                 onClick = onSaveContext,
-                                shape = RoundedCornerShape(12.dp),
+                                icon = Icons.Default.Save,
+                                text = null,
                                 color = NPMColor.copy(alpha = 0.6f)
-                            ) {
-                                Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Save, null, Modifier.size(14.dp), tint = Color.White)
-                                }
-                            }
+                            )
                         }
                     }
-                    // Only show spinner for reconnecting, not for loading (loading shows typing dots in chat)
-                    if (isReconnecting && !isInstallingClaude) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Primary)
+                    // Loading indicator
+                    if (isReconnecting && !isInstallingClaude) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Primary)
+                    }
                 }
             }
 
@@ -355,38 +357,129 @@ fun TerminalScreen(
                 }
             }
             
-            if (showQuickActions) Row(Modifier.fillMaxWidth().background(Surface).horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                defaultQuickActions.forEach { action -> QuickActionButton(action) { onExecuteCommand(action.command) } }
+            // Quick actions bar
+            if (showQuickActions) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Surface)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    defaultQuickActions.forEach { action ->
+                        QuickActionButton(action) { onExecuteCommand(action.command) }
+                    }
+                }
             }
-            
+
+            // Input area - compact for mobile
             Surface(Modifier.fillMaxWidth(), color = Surface) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    IconButton(onClick = { showQuickActions = !showQuickActions }, Modifier.size(48.dp)) { Icon(if (showQuickActions) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp, null, tint = OnSurfaceVariant) }
-                    OutlinedTextField(inputText, { inputText = it }, Modifier.weight(1f), placeholder = { Text(if (isClaudeMode) "Prompt para Claude..." else "Comando...", color = OnSurfaceVariant) }, leadingIcon = { Text(if (isClaudeMode) "🤖" else "$", fontSize = 16.sp) }, shape = RoundedCornerShape(24.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = if (isClaudeMode) ClaudeColor else Primary, focusedContainerColor = SurfaceVariant, unfocusedContainerColor = SurfaceVariant), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { if (inputText.isNotBlank()) { onExecuteCommand(inputText); inputText = "" } }), maxLines = 3)
-                    IconButton(onClick = {
-                        if (!hasAudioPermission) {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        } else if (isListening) {
-                            // Stop continuous listening
-                            shouldKeepListening = false
-                            speechRecognizer.stopListening()
-                            isListening = false
-                        } else {
-                            // Start continuous listening
-                            shouldKeepListening = true
-                            speechRecognizer.startListening(speechIntent)
-                        }
-                    }, Modifier.size(48.dp).clip(CircleShape).background(if (isListening) Error else SurfaceVariant)) { Icon(if (isListening) Icons.Default.Mic else Icons.Default.MicNone, null, tint = Color.White) }
-                    // Stop button - visible when loading
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Quick actions toggle
+                    IconButton(
+                        onClick = { showQuickActions = !showQuickActions },
+                        Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            if (showQuickActions) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                            null,
+                            Modifier.size(20.dp),
+                            tint = OnSurfaceVariant
+                        )
+                    }
+                    // Text input
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
+                            Text(
+                                if (isClaudeMode) "Prompt..." else "Comando...",
+                                color = OnSurfaceVariant,
+                                fontSize = 13.sp
+                            )
+                        },
+                        leadingIcon = {
+                            Text(if (isClaudeMode) "🤖" else "$", fontSize = 14.sp)
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = if (isClaudeMode) ClaudeColor else Primary,
+                            focusedContainerColor = SurfaceVariant,
+                            unfocusedContainerColor = SurfaceVariant
+                        ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (inputText.isNotBlank()) {
+                                    onExecuteCommand(inputText)
+                                    inputText = ""
+                                }
+                            }
+                        ),
+                        maxLines = 3,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
+                    )
+                    // Microphone button
+                    IconButton(
+                        onClick = {
+                            if (!hasAudioPermission) {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            } else if (isListening) {
+                                shouldKeepListening = false
+                                speechRecognizer.stopListening()
+                                isListening = false
+                            } else {
+                                shouldKeepListening = true
+                                speechRecognizer.startListening(speechIntent)
+                            }
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (isListening) Error else SurfaceVariant)
+                    ) {
+                        Icon(
+                            if (isListening) Icons.Default.Mic else Icons.Default.MicNone,
+                            null,
+                            Modifier.size(20.dp),
+                            tint = Color.White
+                        )
+                    }
+                    // Send/Stop button
                     if (isLoading) {
                         IconButton(
                             onClick = onStopExecution,
-                            modifier = Modifier.size(48.dp).clip(CircleShape).background(Error)
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Error)
                         ) {
-                            Icon(Icons.Default.Stop, "Parar execução", tint = Color.White)
+                            Icon(Icons.Default.Stop, "Parar", Modifier.size(20.dp), tint = Color.White)
                         }
                     } else {
-                        IconButton(onClick = { if (inputText.isNotBlank()) { onExecuteCommand(inputText); inputText = "" } }, Modifier.size(48.dp).clip(CircleShape).background(if (inputText.isNotBlank()) Primary else SurfaceVariant), enabled = inputText.isNotBlank()) { Icon(Icons.Default.Send, null, tint = Color.White) }
+                        IconButton(
+                            onClick = {
+                                if (inputText.isNotBlank()) {
+                                    onExecuteCommand(inputText)
+                                    inputText = ""
+                                }
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(if (inputText.isNotBlank()) Primary else SurfaceVariant),
+                            enabled = inputText.isNotBlank()
+                        ) {
+                            Icon(Icons.Default.Send, null, Modifier.size(20.dp), tint = Color.White)
+                        }
                     }
                 }
             }
@@ -423,8 +516,8 @@ fun TerminalScreen(
 @Composable
 fun QuickActionButton(action: QuickAction, onClick: () -> Unit) {
     val color = try { Color(action.color) } catch (e: Exception) { Primary }
-    Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = color.copy(alpha = 0.2f)) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = color.copy(alpha = 0.2f)) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             val icon = when (action.icon) {
                 "build" -> Icons.Default.Build
                 "refresh" -> Icons.Default.Refresh
@@ -434,9 +527,50 @@ fun QuickActionButton(action: QuickAction, onClick: () -> Unit) {
                 "description" -> Icons.Default.Description
                 else -> Icons.Default.PlayArrow
             }
-            Icon(icon, null, Modifier.size(18.dp), tint = color)
-            Spacer(Modifier.width(6.dp))
-            Text(action.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
+            Icon(icon, null, Modifier.size(16.dp), tint = color)
+            Spacer(Modifier.width(4.dp))
+            Text(action.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = color)
+        }
+    }
+}
+
+/**
+ * Compact chip component for responsive toolbar
+ */
+@Composable
+fun CompactChip(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String?,
+    color: Color,
+    textColor: Color = Color.White,
+    enabled: Boolean = true,
+    isLoading: Boolean = false,
+    showClose: Boolean = false
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = color,
+        enabled = enabled
+    ) {
+        Row(
+            Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = textColor)
+            } else {
+                Icon(icon, null, Modifier.size(12.dp), tint = textColor)
+            }
+            if (text != null) {
+                Spacer(Modifier.width(3.dp))
+                Text(text, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = textColor)
+            }
+            if (showClose) {
+                Spacer(Modifier.width(2.dp))
+                Icon(Icons.Default.Close, null, Modifier.size(10.dp), tint = textColor.copy(alpha = 0.7f))
+            }
         }
     }
 }
