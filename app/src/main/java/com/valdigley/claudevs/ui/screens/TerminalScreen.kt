@@ -445,6 +445,31 @@ fun QuickActionButton(action: QuickAction, onClick: () -> Unit) {
 fun TypingIndicator() {
     val infiniteTransition = rememberInfiniteTransition(label = "typing")
 
+    // Elapsed time counter
+    var elapsedSeconds by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            elapsedSeconds++
+        }
+    }
+
+    // Status message based on elapsed time
+    val statusMessage = when {
+        elapsedSeconds < 3 -> "Conectando ao Claude..."
+        elapsedSeconds < 10 -> "Claude está pensando..."
+        elapsedSeconds < 30 -> "Processando solicitação..."
+        elapsedSeconds < 60 -> "Gerando resposta... (pode levar mais tempo)"
+        else -> "Ainda processando... (${elapsedSeconds}s)"
+    }
+
+    // Format elapsed time
+    val timeDisplay = if (elapsedSeconds >= 60) {
+        "${elapsedSeconds / 60}m ${elapsedSeconds % 60}s"
+    } else {
+        "${elapsedSeconds}s"
+    }
+
     // Create animated alpha values for each dot with staggered delays
     val dot1Alpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
@@ -474,16 +499,51 @@ fun TypingIndicator() {
         label = "dot3"
     )
 
-    Row(
-        modifier = Modifier.padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = ClaudeColor.copy(alpha = 0.1f)
     ) {
-        Text("🤖 ", fontSize = 14.sp)
-        Text("●", color = ClaudeColor.copy(alpha = dot1Alpha), fontSize = 16.sp)
-        Spacer(Modifier.width(4.dp))
-        Text("●", color = ClaudeColor.copy(alpha = dot2Alpha), fontSize = 16.sp)
-        Spacer(Modifier.width(4.dp))
-        Text("●", color = ClaudeColor.copy(alpha = dot3Alpha), fontSize = 16.sp)
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🤖 ", fontSize = 14.sp)
+                    Text("●", color = ClaudeColor.copy(alpha = dot1Alpha), fontSize = 16.sp)
+                    Spacer(Modifier.width(4.dp))
+                    Text("●", color = ClaudeColor.copy(alpha = dot2Alpha), fontSize = 16.sp)
+                    Spacer(Modifier.width(4.dp))
+                    Text("●", color = ClaudeColor.copy(alpha = dot3Alpha), fontSize = 16.sp)
+                }
+                // Time elapsed badge
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = SurfaceVariant
+                ) {
+                    Text(
+                        text = timeDisplay,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = OnSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = statusMessage,
+                fontSize = 12.sp,
+                color = ClaudeColor,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
