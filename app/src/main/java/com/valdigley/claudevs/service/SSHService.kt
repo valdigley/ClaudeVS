@@ -57,6 +57,20 @@ data class ConversationMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+// Cursor context format support
+data class CursorTab(
+    val id: String,
+    val title: String,
+    val messages: List<ConversationMessage>,
+    val createdAt: Long,
+    val updatedAt: Long
+)
+
+data class CursorContext(
+    val tabs: List<CursorTab>,
+    val activeTabId: String?
+)
+
 class ConversationManager {
     private val messages = mutableListOf<ConversationMessage>()
     private val maxMessages = 10 // Keep last N exchanges before summarizing
@@ -64,6 +78,7 @@ class ConversationManager {
     private var persistedContext: String? = null // Context loaded from file
     private var conversationSummary: String? = null // AI-generated summary of older messages
     private var needsSummary = false // Flag to indicate context needs summarization
+    private var currentProjectPath: String? = null // Track which project the context belongs to
 
     fun addUserMessage(content: String) {
         messages.add(ConversationMessage("user", content))
@@ -140,6 +155,22 @@ class ConversationManager {
         currentWorkingDir = dir
     }
 
+    // Check if project changed and clear context if needed
+    fun setProjectPath(path: String?): Boolean {
+        if (path != currentProjectPath) {
+            val previousPath = currentProjectPath
+            currentProjectPath = path
+            if (previousPath != null && path != null) {
+                com.valdigley.claudevs.util.CrashLogger.log("ConversationManager", "Project changed from $previousPath to $path - clearing context")
+                clearAll()
+                return true // Context was cleared
+            }
+        }
+        return false
+    }
+
+    fun getCurrentProjectPath(): String? = currentProjectPath
+
     fun buildContextPrompt(newPrompt: String): String {
         val contextBuilder = StringBuilder()
 
@@ -210,6 +241,28 @@ class ConversationManager {
         return sb.toString()
     }
 
+    // Export conversation to Cursor JSON format
+    fun exportToCursorJson(): String {
+        val now = System.currentTimeMillis()
+        val tabId = java.util.UUID.randomUUID().toString()
+        val projectName = currentProjectPath?.split("/")?.lastOrNull() ?: "Conversa"
+
+        val messagesJson = messages.map { msg ->
+            """{"role":"${msg.role}","content":${org.json.JSONObject.quote(msg.content)},"timestamp":${msg.timestamp}}"""
+        }.joinToString(",")
+
+        return """{
+  "tabs": [{
+    "id": "$tabId",
+    "title": "$projectName",
+    "createdAt": ${messages.firstOrNull()?.timestamp ?: now},
+    "updatedAt": $now,
+    "messages": [$messagesJson]
+  }],
+  "activeTabId": "$tabId"
+}"""
+    }
+
     fun clear() {
         messages.clear()
         conversationSummary = null
@@ -227,6 +280,79 @@ class ConversationManager {
     fun hasContext(): Boolean = messages.isNotEmpty() || !persistedContext.isNullOrBlank() || !conversationSummary.isNullOrBlank()
 
     fun getMessageCount(): Int = messages.size
+
+    // Import messages from Cursor context format
+    fun importFromCursor(cursorContext: CursorContext): Int {
+        var importedCount = 0
+        // Find active tab or use the most recent one
+        val activeTab = cursorContext.tabs.find { it.id == cursorContext.activeTabId }
+            ?: cursorContext.tabs.maxByOrNull { it.updatedAt }
+            ?: return 0
+
+        com.valdigley.claudevs.util.CrashLogger.log("ConversationManager", "Importing from Cursor tab: ${activeTab.title}")
+
+        for (msg in activeTab.messages) {
+            when (msg.role) {
+                "user" -> {
+                    messages.add(msg)
+                    importedCount++
+                }
+                "assistant" -> {
+                    messages.add(msg)
+                    importedCount++
+                }
+            }
+        }
+
+        checkIfNeedsSummary()
+        com.valdigley.claudevs.util.CrashLogger.log("ConversationManager", "Imported $importedCount messages from Cursor")
+        return importedCount
+    }
+
+    // Parse Cursor JSON format
+    companion object {
+        fun parseCursorJson(json: String): CursorContext? {
+            return try {
+                val jsonObject = org.json.JSONObject(json)
+                val tabsArray = jsonObject.optJSONArray("tabs") ?: return null
+                val tabs = mutableListOf<CursorTab>()
+
+                for (i in 0 until tabsArray.length()) {
+                    val tabObj = tabsArray.getJSONObject(i)
+                    val messagesArray = tabObj.optJSONArray("messages") ?: continue
+                    val messages = mutableListOf<ConversationMessage>()
+
+                    for (j in 0 until messagesArray.length()) {
+                        val msgObj = messagesArray.getJSONObject(j)
+                        val role = msgObj.optString("role", "user")
+                        val content = msgObj.optString("content", "")
+                        val timestamp = msgObj.optLong("timestamp", System.currentTimeMillis())
+                        if (content.isNotBlank()) {
+                            messages.add(ConversationMessage(role, content, timestamp))
+                        }
+                    }
+
+                    if (messages.isNotEmpty()) {
+                        tabs.add(CursorTab(
+                            id = tabObj.optString("id", ""),
+                            title = tabObj.optString("title", "Conversa"),
+                            messages = messages,
+                            createdAt = tabObj.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = tabObj.optLong("updatedAt", System.currentTimeMillis())
+                        ))
+                    }
+                }
+
+                CursorContext(
+                    tabs = tabs,
+                    activeTabId = if (jsonObject.has("activeTabId")) jsonObject.getString("activeTabId") else null
+                )
+            } catch (e: Exception) {
+                com.valdigley.claudevs.util.CrashLogger.log("ConversationManager", "Failed to parse Cursor JSON: ${e.message}")
+                null
+            }
+        }
+    }
 
     fun hasPersistedContext(): Boolean = !persistedContext.isNullOrBlank()
 
@@ -547,16 +673,8 @@ class SSHService {
                 // Auto-save conversation to file after each successful interaction
                 if (!workingDir.isNullOrBlank()) {
                     try {
-                        val contextPath = "$workingDir/.claude_context"
-                        val content = conversationManager.exportToString()
-                        val escapedContent = content.replace("'", "'\\''")
-                        val saveCmd = "cat > \"$contextPath\" << 'CLAUDE_CONTEXT_EOF'\n$escapedContent\nCLAUDE_CONTEXT_EOF"
-                        val saveChannel = currentSession.openChannel("exec") as com.jcraft.jsch.ChannelExec
-                        saveChannel.setCommand(saveCmd)
-                        saveChannel.connect(10000)
-                        Thread.sleep(500) // Wait for save to complete
-                        saveChannel.disconnect()
-                        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Auto-saved conversation to $contextPath")
+                        // Use chunked base64 save for reliability with large contexts
+                        saveContextFile(workingDir)
                     } catch (e: Exception) {
                         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Auto-save failed: ${e.message}")
                     }
@@ -695,7 +813,20 @@ class SSHService {
     }
 
     // Load context from .claude_context file in working directory
+    // Also supports Cursor format (.cursor_context.json)
     suspend fun loadContextFile(path: String): Boolean {
+        // Check if project changed - clear context if so
+        conversationManager.setProjectPath(path)
+
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Loading context for project: $path")
+
+        // First try Cursor format (.cursor_context.json)
+        val cursorResult = loadCursorContextFile(path)
+        if (cursorResult) {
+            return true
+        }
+
+        // Fall back to ClaudeVS format (.claude_context)
         val contextPath = "$path/.claude_context"
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Loading context from: $contextPath")
         val result = execute("cat \"$contextPath\" 2>/dev/null", useWorkingDir = false)
@@ -739,20 +870,91 @@ class SSHService {
         return false
     }
 
+    // Load Cursor format context file
+    private suspend fun loadCursorContextFile(path: String): Boolean {
+        val cursorPath = "$path/.cursor_context.json"
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Checking for Cursor context: $cursorPath")
+        val result = execute("cat \"$cursorPath\" 2>/dev/null", useWorkingDir = false)
+        if (result.success && result.output.isNotBlank()) {
+            val cursorContext = ConversationManager.parseCursorJson(result.output)
+            if (cursorContext != null && cursorContext.tabs.isNotEmpty()) {
+                val importedCount = conversationManager.importFromCursor(cursorContext)
+                com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Cursor context imported: $importedCount messages")
+                return importedCount > 0
+            }
+        }
+        return false
+    }
+
     // Save context to .claude_context file in working directory
     suspend fun saveContextFile(path: String): Boolean {
         val contextPath = "$path/.claude_context"
         val content = conversationManager.exportToString()
         if (content.isBlank()) return false
 
-        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Saving context to: $contextPath")
-        // Use heredoc for safe multi-line content
-        val escapedContent = content.replace("'", "'\\''")
-        val cmd = "cat > \"$contextPath\" << 'CLAUDE_CONTEXT_EOF'\n$escapedContent\nCLAUDE_CONTEXT_EOF"
-        val result = execute(cmd, useWorkingDir = false)
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Saving context to: $contextPath (${content.length} chars)")
+
+        // Use base64 encoding to handle large content and special characters safely
+        val base64Content = android.util.Base64.encodeToString(content.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+
+        // For very large content, split into chunks
+        val chunkSize = 50000 // ~50KB chunks
+        val result = if (base64Content.length > chunkSize) {
+            // Chunked write for large content
+            saveContextChunked(contextPath, base64Content, chunkSize)
+        } else {
+            // Single write for smaller content
+            val cmd = "echo '$base64Content' | base64 -d > \"$contextPath\""
+            execute(cmd, useWorkingDir = false, timeout = 30000)
+        }
+
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Context saved: ${result.success}")
         return result.success
     }
+
+    // Save large context in chunks to avoid SSH command size limits
+    private suspend fun saveContextChunked(contextPath: String, base64Content: String, chunkSize: Int): ExecutionResult {
+        val chunks = base64Content.chunked(chunkSize)
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Saving in ${chunks.size} chunks")
+
+        // Create temp file for base64 content
+        val tempPath = "/tmp/.claude_context_temp_${System.currentTimeMillis()}"
+
+        for ((index, chunk) in chunks.withIndex()) {
+            val operator = if (index == 0) ">" else ">>"
+            val cmd = "echo -n '$chunk' $operator \"$tempPath\""
+            val result = execute(cmd, useWorkingDir = false, timeout = 15000)
+            if (!result.success) {
+                com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Chunk $index failed: ${result.error}")
+                execute("rm -f \"$tempPath\"", useWorkingDir = false)
+                return result
+            }
+        }
+
+        // Decode base64 and move to final location
+        val decodeCmd = "base64 -d \"$tempPath\" > \"$contextPath\" && rm -f \"$tempPath\""
+        return execute(decodeCmd, useWorkingDir = false, timeout = 30000)
+    }
+
+    // Save context in Cursor JSON format (for compatibility)
+    suspend fun saveContextFileCursor(path: String): Boolean {
+        val cursorPath = "$path/.cursor_context.json"
+        val content = conversationManager.exportToCursorJson()
+        if (content.isBlank()) return false
+
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Saving Cursor context to: $cursorPath")
+
+        // Use base64 encoding for safe transfer
+        val base64Content = android.util.Base64.encodeToString(content.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        val cmd = "echo '$base64Content' | base64 -d > \"$cursorPath\""
+        val result = execute(cmd, useWorkingDir = false, timeout = 30000)
+
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Cursor context saved: ${result.success}")
+        return result.success
+    }
+
+    // Get Cursor format export for display/copy
+    fun getContextAsCursorJson(): String = conversationManager.exportToCursorJson()
 
     suspend fun installClaudeCode(): ExecutionResult {
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Installing Claude Code...")
