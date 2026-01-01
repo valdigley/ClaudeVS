@@ -815,7 +815,14 @@ class SSHService {
     // Load context from .claude_context file in working directory
     // Also supports Cursor format (.cursor_context.json)
     suspend fun loadContextFile(path: String): Boolean {
-        // Check if project changed - clear context if so
+        // Check if project changed - save current context before switching
+        val previousPath = conversationManager.getCurrentProjectPath()
+        if (previousPath != null && previousPath != path && conversationManager.getMessageCount() > 0) {
+            com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Saving context for $previousPath before switching to $path")
+            saveContextFile(previousPath)
+        }
+
+        // Now clear and set new project path
         conversationManager.setProjectPath(path)
 
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Loading context for project: $path")
