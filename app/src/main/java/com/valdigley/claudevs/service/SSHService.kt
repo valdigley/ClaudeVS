@@ -7,6 +7,10 @@ import com.valdigley.claudevs.data.model.SSHConnection
 import com.valdigley.claudevs.data.model.ProjectTemplate
 import com.valdigley.claudevs.data.model.ProjectTemplates
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -358,6 +362,44 @@ class ConversationManager {
 
     fun hasSummary(): Boolean = !conversationSummary.isNullOrBlank()
 
+    // Get messages as pairs (role, content) for display
+    fun getMessagesForDisplay(): List<Pair<String, String>> {
+        return messages.map { Pair(it.role, it.content) }
+    }
+
+    // Get the current summary
+    fun getSummary(): String? = conversationSummary
+
+    // Get older messages for local summary (before truncation)
+    fun getOldMessagesForSummary(): List<Pair<String, String>> {
+        val recentCount = 4 // Keep last 2 exchanges
+        if (messages.size <= recentCount) return emptyList()
+        return messages.take(messages.size - recentCount).map { Pair(it.role, it.content) }
+    }
+
+    // Apply local truncation (instant, no Claude call)
+    fun applyLocalTruncation(localSummary: String) {
+        val recentCount = 4
+        val recentMessages = if (messages.size > recentCount) {
+            messages.takeLast(recentCount).toMutableList()
+        } else {
+            messages.toMutableList()
+        }
+
+        messages.clear()
+        messages.addAll(recentMessages)
+
+        // Combine with existing summary
+        conversationSummary = if (conversationSummary.isNullOrBlank()) {
+            localSummary
+        } else {
+            "$conversationSummary\n\n$localSummary"
+        }
+
+        needsSummary = false
+        com.valdigley.claudevs.util.CrashLogger.log("ConversationManager", "Local truncation applied. Messages: ${messages.size}")
+    }
+
     fun getContextStats(): ContextStats {
         val totalChars = messages.sumOf { it.content.length } + (conversationSummary?.length ?: 0)
         return ContextStats(
@@ -398,6 +440,7 @@ class SSHService {
     // Execution control
     @Volatile private var currentChannel: ChannelExec? = null
     @Volatile private var executionCancelled = false
+    @Volatile private var executionTimedOut = false
 
     suspend fun connect(connection: SSHConnection): Boolean = withContext(Dispatchers.IO) {
         com.valdigley.claudevs.util.CrashLogger.log("SSHService.connect", "Connecting to ${connection.host}:${connection.port} as ${connection.username}")
@@ -585,13 +628,28 @@ class SSHService {
 
         com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Claude command: autopilot=$autopilot, timeout=${timeout}ms")
 
-        // Reset cancellation flag
+        // Reset cancellation flags
         executionCancelled = false
+        executionTimedOut = false
 
         val startTime = System.currentTimeMillis()
         var channel: com.jcraft.jsch.ChannelExec? = null
 
+        // Hard timeout: auto-cancel after 3 minutes to prevent hanging forever
+        val hardTimeoutMs = 180000L // 3 minutes
+        var timeoutJob: Job? = null
+
         try {
+            // Start timeout watcher
+            timeoutJob = CoroutineScope(Dispatchers.IO).launch {
+                delay(hardTimeoutMs)
+                if (!executionCancelled && currentChannel != null) {
+                    com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Hard timeout reached (${hardTimeoutMs/1000}s) - cancelling execution")
+                    executionTimedOut = true
+                    cancelExecution()
+                }
+            }
+
             channel = currentSession.openChannel("exec") as com.jcraft.jsch.ChannelExec
             currentChannel = channel // Track for cancellation
             // Always enable PTY for proper terminal emulation
@@ -620,10 +678,15 @@ class SSHService {
             }
             reader.close()
 
-            // Check if cancelled
+            // Check if cancelled (by user or timeout)
             if (executionCancelled) {
-                com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Execution was cancelled")
-                return@withContext ExecutionResult(false, AnsiCleaner.clean(outputBuilder.toString()), "Execução cancelada pelo usuário", System.currentTimeMillis() - startTime)
+                val reason = if (executionTimedOut) {
+                    "Timeout: execução cancelada após ${hardTimeoutMs/1000} segundos"
+                } else {
+                    "Execução cancelada pelo usuário"
+                }
+                com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Execution was cancelled: $reason")
+                return@withContext ExecutionResult(false, AnsiCleaner.clean(outputBuilder.toString()), reason, System.currentTimeMillis() - startTime)
             }
 
             val errorBuilder = StringBuilder()
@@ -701,6 +764,8 @@ class SSHService {
             com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Claude PTY ERROR: ${e.message}")
             ExecutionResult(false, "", e.message ?: "Erro desconhecido", System.currentTimeMillis() - startTime)
         } finally {
+            // Cancel the timeout watcher
+            timeoutJob?.cancel()
             currentChannel = null // Clear channel reference
             try { channel?.disconnect() } catch (e: Exception) { /* ignore */ }
         }
@@ -786,26 +851,33 @@ class SSHService {
     fun needsContextSummary(): Boolean = conversationManager.needsContextSummary()
     fun getContextStats(): ContextStats = conversationManager.getContextStats()
 
-    // Summarize context using Claude (uses OAuth authentication)
-    suspend fun summarizeContextIfNeeded(): Boolean {
+    // Get conversation history for display
+    fun getConversationHistory(): List<Pair<String, String>> = conversationManager.getMessagesForDisplay()
+    fun getConversationSummary(): String? = conversationManager.getSummary()
+
+    // Truncate context locally (instant, no Claude call needed)
+    // Keeps only recent messages and creates a text summary of older ones
+    fun summarizeContextIfNeeded(): Boolean {
         if (!conversationManager.needsContextSummary()) return false
 
-        val summaryPrompt = conversationManager.getContextForSummary() ?: return false
-        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Summarizing context...")
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Truncating context locally...")
 
-        val path = claudePath ?: return false
-        val escapedPrompt = summaryPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\$", "\\\$").replace("`", "\\`")
+        // Create a simple local summary of older messages
+        val oldMessages = conversationManager.getOldMessagesForSummary()
+        if (oldMessages.isEmpty()) return false
 
-        val claudeCmd = "\"$path\" -p \"$escapedPrompt\" 2>&1"
-
-        val result = execute(claudeCmd, useWorkingDir = false, timeout = 60000)
-        if (result.success && result.output.isNotBlank()) {
-            val cleanOutput = AnsiCleaner.clean(result.output)
-            conversationManager.applySummary(cleanOutput)
-            com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Context summarized successfully")
-            return true
+        val localSummary = buildString {
+            appendLine("=== Conversa anterior (resumida) ===")
+            for (msg in oldMessages.takeLast(6)) { // Keep summaries of last 3 exchanges
+                val role = if (msg.first == "user") "Usuário" else "Claude"
+                val preview = msg.second.take(200).replace("\n", " ")
+                appendLine("$role: $preview${if (msg.second.length > 200) "..." else ""}")
+            }
         }
-        return false
+
+        conversationManager.applyLocalTruncation(localSummary)
+        com.valdigley.claudevs.util.CrashLogger.log("SSHService", "Context truncated successfully")
+        return true
     }
 
     fun applySummary(summary: String) {

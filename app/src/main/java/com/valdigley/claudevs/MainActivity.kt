@@ -234,6 +234,25 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
                     val msgCount = sshService.getConversationMessageCount()
                     if (contextLoaded && msgCount > 0) {
                         addOutput("📄 Histórico carregado ($msgCount mensagens)", LineType.INFO)
+
+                        // Display previous conversation summary if exists
+                        val summary = sshService.getConversationSummary()
+                        if (!summary.isNullOrBlank()) {
+                            addOutput("\n📋 Resumo anterior:", LineType.INFO)
+                            addOutput(summary.take(500) + if (summary.length > 500) "..." else "", LineType.OUTPUT)
+                        }
+
+                        // Display recent messages from history
+                        val history = sshService.getConversationHistory()
+                        if (history.isNotEmpty()) {
+                            addOutput("\n💬 Conversa recente:", LineType.INFO)
+                            for ((role, content) in history.takeLast(6)) { // Show last 3 exchanges
+                                val prefix = if (role == "user") "👤" else "🤖"
+                                val preview = content.take(300).replace("\n", " ")
+                                addOutput("$prefix $preview${if (content.length > 300) "..." else ""}", if (role == "user") LineType.COMMAND else LineType.OUTPUT)
+                            }
+                            addOutput("─".repeat(40), LineType.INFO)
+                        }
                     }
                     // Auto-detect project type
                     val template = sshService.detectProjectType(currentPath)
@@ -355,6 +374,17 @@ fun MainApp(database: AppDatabase, sshService: SSHService, updateChecker: AppUpd
 
             var streamingStarted = false
             val outputLines = mutableListOf<String>()
+
+            // Pre-summarize context BEFORE sending to Claude to avoid timeouts
+            if (isClaudeMode && !isDirectShellCommand && sshService.needsContextSummary()) {
+                addOutput("📝 Resumindo contexto antes de enviar...", LineType.INFO)
+                val summarized = sshService.summarizeContextIfNeeded()
+                if (summarized) {
+                    addOutput("✅ Contexto resumido", LineType.SUCCESS)
+                    contextStats = sshService.getContextStats()
+                }
+            }
+
             val result = if (isClaudeMode && !isDirectShellCommand) {
                 CrashLogger.log("executeCommand", "Using Claude mode with autopilot=$isAutopilot")
                 // Add Claude header before streaming starts
